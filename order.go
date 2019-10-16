@@ -253,6 +253,7 @@ type Transaction struct {
 	DeviceID       *int64           `json:"device_id,omitempty"`
 	ErrorCode      string           `json:"error_code,omitempty"`
 	SourceName     string           `json:"source_name,omitempty"`
+	Source         string           `json:"source,omitempty"`
 	PaymentDetails *PaymentDetails  `json:"payment_details,omitempty"`
 }
 
