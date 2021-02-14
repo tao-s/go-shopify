@@ -15,6 +15,8 @@ import (
 
 const shopifyChecksumHeader = "X-Shopify-Hmac-Sha256"
 
+var accessTokenRelPath = "admin/oauth/access_token"
+
 // Returns a Shopify oauth authorization url for the given shopname and state.
 //
 // State is a unique value that can be used to check the authenticity during a
@@ -46,8 +48,15 @@ func (app App) GetAccessToken(shopName string, code string) (string, error) {
 		Code:         code,
 	}
 
-	client := NewClient(app, shopName, "")
-	req, err := client.NewRequest("POST", "admin/oauth/access_token", data, nil)
+	client := app.Client
+	if client == nil {
+		client = NewClient(app, shopName, "")
+	}
+
+	req, err := client.NewRequest("POST", accessTokenRelPath, data, nil)
+	if err != nil {
+		return "", err
+	}
 
 	token := new(Token)
 	err = client.Do(req, token)

@@ -32,17 +32,17 @@ type PageServiceOp struct {
 
 // Page represents a Shopify page.
 type Page struct {
-	ID             int64       `json:"id"`
-	Author         string      `json:"author"`
-	Handle         string      `json:"handle"`
-	Title          string      `json:"title"`
-	CreatedAt      *time.Time  `json:"created_at"`
-	UpdatedAt      *time.Time  `json:"updated_at"`
-	BodyHTML       string      `json:"body_html"`
-	TemplateSuffix string      `json:"template_suffix"`
-	PublishedAt    *time.Time  `json:"published_at"`
-	ShopID         int64       `json:"shop_id"`
-	Metafields     []Metafield `json:"metafields"`
+	ID             int64       `json:"id,omitempty"`
+	Author         string      `json:"author,omitempty"`
+	Handle         string      `json:"handle,omitempty"`
+	Title          string      `json:"title,omitempty"`
+	CreatedAt      *time.Time  `json:"created_at,omitempty"`
+	UpdatedAt      *time.Time  `json:"updated_at,omitempty"`
+	BodyHTML       string      `json:"body_html,omitempty"`
+	TemplateSuffix string      `json:"template_suffix,omitempty"`
+	PublishedAt    *time.Time  `json:"published_at,omitempty"`
+	ShopID         int64       `json:"shop_id,omitempty"`
+	Metafields     []Metafield `json:"metafields,omitempty"`
 }
 
 // PageResource represents the result from the pages/X.json endpoint
@@ -57,7 +57,7 @@ type PagesResource struct {
 
 // List pages
 func (s *PageServiceOp) List(options interface{}) ([]Page, error) {
-	path := fmt.Sprintf("%s/%s.json", globalApiPathPrefix, pagesBasePath)
+	path := fmt.Sprintf("%s.json", pagesBasePath)
 	resource := new(PagesResource)
 	err := s.client.Get(path, resource, options)
 	return resource.Pages, err
@@ -65,13 +65,13 @@ func (s *PageServiceOp) List(options interface{}) ([]Page, error) {
 
 // Count pages
 func (s *PageServiceOp) Count(options interface{}) (int, error) {
-	path := fmt.Sprintf("%s/%s/count.json", globalApiPathPrefix, pagesBasePath)
+	path := fmt.Sprintf("%s/count.json", pagesBasePath)
 	return s.client.Count(path, options)
 }
 
 // Get individual page
 func (s *PageServiceOp) Get(pageID int64, options interface{}) (*Page, error) {
-	path := fmt.Sprintf("%s/%s/%d.json", globalApiPathPrefix, pagesBasePath, pageID)
+	path := fmt.Sprintf("%s/%d.json", pagesBasePath, pageID)
 	resource := new(PageResource)
 	err := s.client.Get(path, resource, options)
 	return resource.Page, err
@@ -79,7 +79,7 @@ func (s *PageServiceOp) Get(pageID int64, options interface{}) (*Page, error) {
 
 // Create a new page
 func (s *PageServiceOp) Create(page Page) (*Page, error) {
-	path := fmt.Sprintf("%s/%s.json", globalApiPathPrefix, pagesBasePath)
+	path := fmt.Sprintf("%s.json", pagesBasePath)
 	wrappedData := PageResource{Page: &page}
 	resource := new(PageResource)
 	err := s.client.Post(path, wrappedData, resource)
@@ -88,7 +88,7 @@ func (s *PageServiceOp) Create(page Page) (*Page, error) {
 
 // Update an existing page
 func (s *PageServiceOp) Update(page Page) (*Page, error) {
-	path := fmt.Sprintf("%s/%s/%d.json", globalApiPathPrefix, pagesBasePath, page.ID)
+	path := fmt.Sprintf("%s/%d.json", pagesBasePath, page.ID)
 	wrappedData := PageResource{Page: &page}
 	resource := new(PageResource)
 	err := s.client.Put(path, wrappedData, resource)
@@ -97,7 +97,7 @@ func (s *PageServiceOp) Update(page Page) (*Page, error) {
 
 // Delete an existing page.
 func (s *PageServiceOp) Delete(pageID int64) error {
-	return s.client.Delete(fmt.Sprintf("%s/%s/%d.json", globalApiPathPrefix, pagesBasePath, pageID))
+	return s.client.Delete(fmt.Sprintf("%s/%d.json", pagesBasePath, pageID))
 }
 
 // List metafields for a page

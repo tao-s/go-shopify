@@ -1,14 +1,15 @@
 package goshopify
 
 import (
-	"net/url"
-	"testing"
-
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"gopkg.in/jarcoal/httpmock.v1"
 	"net/http"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/jarcoal/httpmock"
 )
 
 func TestAppAuthorizeUrl(t *testing.T) {
@@ -38,6 +39,7 @@ func TestAppGetAccessToken(t *testing.T) {
 	httpmock.RegisterResponder("POST", "https://fooshop.myshopify.com/admin/oauth/access_token",
 		httpmock.NewStringResponder(200, `{"access_token":"footoken"}`))
 
+	app.Client = client
 	token, err := app.GetAccessToken("fooshop", "foocode")
 
 	if err != nil {
@@ -47,6 +49,33 @@ func TestAppGetAccessToken(t *testing.T) {
 	expected := "footoken"
 	if token != expected {
 		t.Errorf("Token = %v, expected %v", token, expected)
+	}
+}
+
+func TestAppGetAccessTokenError(t *testing.T) {
+	setup()
+	defer teardown()
+
+	// app.Client isn't specified so NewClient called
+	expectedError := errors.New("invalid_request")
+
+	token, err := app.GetAccessToken("fooshop", "")
+
+	if err == nil || err.Error() != expectedError.Error() {
+		t.Errorf("Expected error %s got error %s", expectedError.Error(), err.Error())
+	}
+	if token != "" {
+		t.Errorf("Expected empty token received %s", token)
+	}
+
+	expectedError = errors.New("parse ://example.com: missing protocol scheme")
+	accessTokenRelPath = "://example.com" // cause NewRequest to trip a parse error
+	token, err = app.GetAccessToken("fooshop", "")
+	if err == nil || !strings.Contains(err.Error(), "missing protocol scheme") {
+		t.Errorf("Expected error %s got error %s", expectedError.Error(), err.Error())
+	}
+	if token != "" {
+		t.Errorf("Expected empty token received %s", token)
 	}
 }
 

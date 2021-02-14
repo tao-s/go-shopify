@@ -1,7 +1,9 @@
 package goshopify
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -15,10 +17,14 @@ const ordersResourceName = "orders"
 // See: https://help.shopify.com/api/reference/order
 type OrderService interface {
 	List(interface{}) ([]Order, error)
+	ListWithPagination(interface{}) ([]Order, *Pagination, error)
 	Count(interface{}) (int, error)
 	Get(int64, interface{}) (*Order, error)
 	Create(Order) (*Order, error)
 	Update(Order) (*Order, error)
+	Cancel(int64, interface{}) (*Order, error)
+	Close(int64) (*Order, error)
+	Open(int64) (*Order, error)
 
 	// MetafieldsService used for Order resource to communicate with Metafields resource
 	MetafieldsService
@@ -52,20 +58,24 @@ type OrderCountOptions struct {
 // A struct for all available order list options.
 // See: https://help.shopify.com/api/reference/order#index
 type OrderListOptions struct {
-	Page              int       `url:"page,omitempty"`
-	Limit             int       `url:"limit,omitempty"`
-	SinceID           int64     `url:"since_id,omitempty"`
+	ListOptions
 	Status            string    `url:"status,omitempty"`
 	FinancialStatus   string    `url:"financial_status,omitempty"`
 	FulfillmentStatus string    `url:"fulfillment_status,omitempty"`
-	CreatedAtMin      time.Time `url:"created_at_min,omitempty"`
-	CreatedAtMax      time.Time `url:"created_at_max,omitempty"`
-	UpdatedAtMin      time.Time `url:"updated_at_min,omitempty"`
-	UpdatedAtMax      time.Time `url:"updated_at_max,omitempty"`
 	ProcessedAtMin    time.Time `url:"processed_at_min,omitempty"`
 	ProcessedAtMax    time.Time `url:"processed_at_max,omitempty"`
-	Fields            string    `url:"fields,omitempty"`
 	Order             string    `url:"order,omitempty"`
+}
+
+// A struct of all available order cancel options.
+// See: https://help.shopify.com/api/reference/order#index
+type OrderCancelOptions struct {
+	Amount   *decimal.Decimal `json:"amount,omitempty"`
+	Currency string           `json:"currency,omitempty"`
+	Restock  bool             `json:"restock,omitempty"`
+	Reason   string           `json:"reason,omitempty"`
+	Email    bool             `json:"email,omitempty"`
+	Refund   *Refund          `json:"refund,omitempty"`
 }
 
 // Order represents a Shopify order
@@ -189,6 +199,45 @@ type LineItem struct {
 	AppliedDiscount            *AppliedDiscount `json:"applied_discount,omitempty"`
 }
 
+// UnmarshalJSON custom unmarsaller for LineItem required to mitigate some older orders having LineItem.Properies
+// which are empty JSON objects rather than the expected array.
+func (li *LineItem) UnmarshalJSON(data []byte) error {
+	type alias LineItem
+	aux := &struct {
+		Properties json.RawMessage `json:"properties"`
+		*alias
+	}{alias: (*alias)(li)}
+
+	err := json.Unmarshal(data, &aux)
+	if err != nil {
+		return err
+	}
+
+	if len(aux.Properties) == 0 {
+		return nil
+	} else if aux.Properties[0] == '[' { // if the first character is a '[' we unmarshal into an array
+		var p []NoteAttribute
+		err = json.Unmarshal(aux.Properties, &p)
+		if err != nil {
+			return err
+		}
+		li.Properties = p
+	} else { // else we unmarshal it into a struct
+		var p NoteAttribute
+		err = json.Unmarshal(aux.Properties, &p)
+		if err != nil {
+			return err
+		}
+		if p.Name == "" && p.Value == nil { // if the struct is empty we set properties to nil
+			li.Properties = nil
+		} else {
+			li.Properties = []NoteAttribute{p} // else we set them to an array with the property nested
+		}
+	}
+
+	return nil
+}
+
 type LineItemProperty struct {
 	Message string `json:"message"`
 }
@@ -227,6 +276,30 @@ type ShippingLines struct {
 	DeliveryCategory              string           `json:"delivery_category,omitempty"`
 	CarrierIdentifier             string           `json:"carrier_identifier,omitempty"`
 	TaxLines                      []TaxLine        `json:"tax_lines,omitempty"`
+}
+
+// UnmarshalJSON custom unmarshaller for ShippingLines implemented to handle requested_fulfillment_service_id being
+// returned as json numbers or json nulls instead of json strings
+func (sl *ShippingLines) UnmarshalJSON(data []byte) error {
+	type alias ShippingLines
+	aux := &struct {
+		*alias
+		RequestedFulfillmentServiceID interface{} `json:"requested_fulfillment_service_id"`
+	}{alias: (*alias)(sl)}
+
+	err := json.Unmarshal(data, &aux)
+	if err != nil {
+		return err
+	}
+
+	switch aux.RequestedFulfillmentServiceID.(type) {
+	case nil:
+		sl.RequestedFulfillmentServiceID = ""
+	default:
+		sl.RequestedFulfillmentServiceID = fmt.Sprintf("%v", aux.RequestedFulfillmentServiceID)
+	}
+
+	return nil
 }
 
 type TaxLine struct {
@@ -288,21 +361,43 @@ type RefundLineItem struct {
 
 // List orders
 func (s *OrderServiceOp) List(options interface{}) ([]Order, error) {
-	path := fmt.Sprintf("%s/%s.json", globalApiPathPrefix, ordersBasePath)
+	orders, _, err := s.ListWithPagination(options)
+	if err != nil {
+		return nil, err
+	}
+	return orders, nil
+}
+
+func (s *OrderServiceOp) ListWithPagination(options interface{}) ([]Order, *Pagination, error) {
+	path := fmt.Sprintf("%s.json", ordersBasePath)
 	resource := new(OrdersResource)
-	err := s.client.Get(path, resource, options)
-	return resource.Orders, err
+	headers := http.Header{}
+
+	headers, err := s.client.createAndDoGetHeaders("GET", path, nil, options, resource)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Extract pagination info from header
+	linkHeader := headers.Get("Link")
+
+	pagination, err := extractPagination(linkHeader)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return resource.Orders, pagination, nil
 }
 
 // Count orders
 func (s *OrderServiceOp) Count(options interface{}) (int, error) {
-	path := fmt.Sprintf("%s/%s/count.json", globalApiPathPrefix, ordersBasePath)
+	path := fmt.Sprintf("%s/count.json", ordersBasePath)
 	return s.client.Count(path, options)
 }
 
 // Get individual order
 func (s *OrderServiceOp) Get(orderID int64, options interface{}) (*Order, error) {
-	path := fmt.Sprintf("%s/%s/%d.json", globalApiPathPrefix, ordersBasePath, orderID)
+	path := fmt.Sprintf("%s/%d.json", ordersBasePath, orderID)
 	resource := new(OrderResource)
 	err := s.client.Get(path, resource, options)
 	return resource.Order, err
@@ -310,7 +405,7 @@ func (s *OrderServiceOp) Get(orderID int64, options interface{}) (*Order, error)
 
 // Create order
 func (s *OrderServiceOp) Create(order Order) (*Order, error) {
-	path := fmt.Sprintf("%s/%s.json", globalApiPathPrefix, ordersBasePath)
+	path := fmt.Sprintf("%s.json", ordersBasePath)
 	wrappedData := OrderResource{Order: &order}
 	resource := new(OrderResource)
 	err := s.client.Post(path, wrappedData, resource)
@@ -319,10 +414,34 @@ func (s *OrderServiceOp) Create(order Order) (*Order, error) {
 
 // Update order
 func (s *OrderServiceOp) Update(order Order) (*Order, error) {
-	path := fmt.Sprintf("%s/%s/%d.json", globalApiPathPrefix, ordersBasePath, order.ID)
+	path := fmt.Sprintf("%s/%d.json", ordersBasePath, order.ID)
 	wrappedData := OrderResource{Order: &order}
 	resource := new(OrderResource)
 	err := s.client.Put(path, wrappedData, resource)
+	return resource.Order, err
+}
+
+// Cancel order
+func (s *OrderServiceOp) Cancel(orderID int64, options interface{}) (*Order, error) {
+	path := fmt.Sprintf("%s/%d/cancel.json", ordersBasePath, orderID)
+	resource := new(OrderResource)
+	err := s.client.Post(path, options, resource)
+	return resource.Order, err
+}
+
+// Close order
+func (s *OrderServiceOp) Close(orderID int64) (*Order, error) {
+	path := fmt.Sprintf("%s/%d/close.json", ordersBasePath, orderID)
+	resource := new(OrderResource)
+	err := s.client.Post(path, nil, resource)
+	return resource.Order, err
+}
+
+// Open order
+func (s *OrderServiceOp) Open(orderID int64) (*Order, error) {
+	path := fmt.Sprintf("%s/%d/open.json", ordersBasePath, orderID)
+	resource := new(OrderResource)
+	err := s.client.Post(path, nil, resource)
 	return resource.Order, err
 }
 
